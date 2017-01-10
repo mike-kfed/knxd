@@ -20,48 +20,31 @@ BuildRequires: systemd-devel
 %endif
 BuildRequires: libpthsem-devel
 
-# defines make_install macro to call make if not found case on (rhel6)
-%{!?make_install: %define make_install "makeme"}
-
 ###############################################################################
-#
-# Description.
-#
 %description
 A KNX daemon and tools supporting it. 
 
 ###############################################################################
-#
-# preparation for build
-#
 %prep
 %autosetup -n %{name}-%{version}
 
 ###############################################################################
-#
-# build
-#
 %build
 %configure
+# make_build macro does not exist on rhel6
+%if 0%{?make_build:1}
 %make_build
-
+%else
+make
+%endif
 
 ###############################################################################
-#
-# install
-#
 %install
 %make_install
 
 ###############################################################################
-#
-# what is being installed
-#
 %files
 %defattr(-,root,root,-)
-
-# /etc
-%config(noreplace) %{_sysconfdir}/knxd.conf
 
 # /usr/bin
 %{_bindir}/bcuaddrtab
@@ -82,10 +65,15 @@ A KNX daemon and tools supporting it.
 %{_libdir}/libeibclient.so.0
 %{_libdir}/libeibclient.so.0.0.0
 
-%if "%{_unitdir}" == "%%{_unitdir}"
+# when _unitdir macro is defined then systemd-devel is present
+# this means we must mention the systemd files
+%if 0%{?_unitdir:1}
+%config(noreplace) %{_sysconfdir}/knxd.conf
 %{_unitdir}/knxd.service
 %{_unitdir}/knxd.socket
 %{_sysusersdir}/knxd.conf
+# TODO: copy init.d scripts and config for non-systemd OS
+#%else
 %endif
 
 %{_libdir}/knxd/busmonitor1
@@ -211,30 +199,22 @@ A KNX daemon and tools supporting it.
 %{_datarootdir}/knxd/EIBConnection.pyo
 
 ###############################################################################
-#
 # preinstall
-#
 %pre
 /usr/bin/getent group knxd || /usr/sbin/groupadd -r knxd
 /usr/bin/getent passwd knxd || /usr/sbin/useradd -r -s /sbin/nologin -g knxd knxd
 
 ###############################################################################
-#
 # postinstall
-#
 %post
 
 ###############################################################################
-#
 # pre-remove script
-#
 %preun
 
 
 ###############################################################################
-#
 # post-remove script
-#
 %postun
 if [ "$1" = "1" ]; then
     # this is an upgrade do nothing
@@ -246,9 +226,7 @@ elif [ "$1" = "0" ]; then
 fi
 
 ###############################################################################
-#
 # verify
-#
 %verifyscript
 
 %changelog
