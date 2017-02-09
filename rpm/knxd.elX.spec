@@ -201,8 +201,8 @@ make
 ###############################################################################
 # preinstall
 %pre
-/usr/bin/getent group knxd || /usr/sbin/groupadd -r knxd
-/usr/bin/getent passwd knxd || /usr/sbin/useradd -r -s /sbin/nologin -g knxd knxd
+/usr/bin/getent group knxd > /dev/null || /usr/sbin/groupadd -r knxd
+/usr/bin/getent passwd knxd > /dev/null || /usr/sbin/useradd -r -s /sbin/nologin -g knxd knxd
 
 ###############################################################################
 # postinstall
@@ -221,8 +221,7 @@ if [ "$1" = "1" ]; then
     echo -n
 elif [ "$1" = "0" ]; then
     # this is an uninstall remove user
-    /usr/bin/getent passwd knxd && /usr/sbin/userdel knxd
-    /usr/bin/getent group knxd && /usr/sbin/groupdel knxd
+    userdel --force knxd 2> /dev/null; true
 fi
 
 ###############################################################################
