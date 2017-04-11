@@ -23,17 +23,19 @@
 #include "emi_common.h"
 
 /** EMI2 backend */
-class EMI2Layer2:public EMI_Common
+class EMI2Driver:public EMI_Common
 {
-  const char *Name() { return "emi1"; }
   void cmdEnterMonitor();
   void cmdLeaveMonitor();
   void cmdOpen();
   void cmdClose();
   const uint8_t * getIndTypes();
+  EMIVer getVersion() { return vEMI2; }
+  void sendLocal_done_cb(bool success);
+  enum { N_bad, N_up, N_down, N_open, N_enter } sendLocal_done_next = N_bad;
 public:
-  EMI2Layer2 (LowLevelDriver * i, L2options *opt) : EMI_Common(i,opt) {}
-  ~EMI2Layer2 ();
+  EMI2Driver (LowLevelIface* c, IniSectionPtr& s, LowLevelDriver *i = nullptr);
+  virtual ~EMI2Driver ();
 };
 
 #endif
