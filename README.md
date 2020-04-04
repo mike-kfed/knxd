@@ -9,7 +9,13 @@ https://www.auto.tuwien.ac.at/~mkoegler/index.php/bcusdk
 
 For a (german only) history and discussion why knxd emerged please also see: [eibd(war bcusdk) Fork -> knxd](http://knx-user-forum.de/forum/öffentlicher-bereich/knx-eib-forum/39972-eibd-war-bcusdk-fork-knxd)
 
-# Future stable version
+# STOP if you install on Debian
+
+Debian packaging has been moved to the ``deb`` branch. Please use that
+branch (by way of `git checkout deb`) if you're following some (outdated …)
+installation instructions for Debian, Ubuntu or their derivatives.
+
+# Stable version
 
 This version should be OK for general use.
 
@@ -22,6 +28,33 @@ Check [the Wiki page](https://github.com/knxd/knxd/wiki) for other version(s) to
 ## New Features since 0.12
 
 ### see https://github.com/knxd/knxd/blob/v0.12/README.md for earlier changes
+
+* 0.14.34
+
+  * Cleanup: remove debian packaging, will be in a separate branch
+
+* 0.14.33
+  
+  * There is a new "retry" filter which controls closing and re-opening a
+    misbehaving driver. This filter is implicitly auto-inserted in front of
+    a driver.
+
+  * Internal: Driver errors are now signalled with "stopped(true)" instead
+    of "errored" which reduces code duplication.
+
+  * Default timeout for EMI acks increased to 2 seconds
+    Some USB interfaces manage to be abysmally slow
+    Also hopefully-fixed USB retry and shutdown handling so that the
+    "retry" filter can do its work.
+
+  * Replies from devices in programming mode are no longer retransmitted to
+    the originating interface.
+
+* 0.14.32
+
+  * Tags no longer use a leading 'v'.
+
+  * udev rule for SATEL USB interface
 
 * 0.14
 
@@ -214,16 +247,22 @@ don't have more than one.
 
 ### Adding a TPUART serial interface to the Raspberry Pi
 
-The console is /dev/ttyAMA0. The udev line is
+On the Raspberry Pi 2 and 3 the console is /dev/ttyAMA0. The udev line is:
 
   ```
   ACTION=="add", SUBSYSTEM=="tty", KERNELS="ttyAMA0", SYMLINK+="knx1", OWNER="knxd"
   ```
 
+On the Raspberry Pi 4 the console is on /dev/ttyACM0. The udev line is:
+
+  ```
+  ACTION=="add", SUBSYSTEM=="tty", KERNELS=="ttyACM0", SYMLINK+="knx1", OWNER="knxd"
+  ```
+
 This rule creates a symlink ``/dev/knx1`` which points to the console. The
 knxd configuration will use that symlink.
 
-You need to disable the serial console. Edit ``/boot/cmdline.txt`` and
+On the Raspberry Pi 2 and 3 you need to disable the serial console. Edit ``/boot/cmdline.txt`` and
 remove the ``console=ttyAMA0`` entry. Then reboot.
 
 On the Raspberry Pi 3, the serial console is on ``ttyAMA1`` by default.

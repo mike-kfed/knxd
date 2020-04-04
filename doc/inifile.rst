@@ -100,6 +100,12 @@ The config file generation code tries to keep the generated file reasonably
 simple. Thus the "log" filters (unlike the "pace" filter) don't have a
 section of their own, because they don't have arguments.
 
+At startup, knxd will set up all configured drivers (unless they're
+marked with ``ignore``).
+If a driver fails, knxd will terminate with an error.
+Use the ``retry`` filter to modify this.
+
+
 main
 ====
 
@@ -300,7 +306,10 @@ A "debug" section may contain these options:
 
       "packet-level tracing" does *not* include the data / control messages
       that are exchanged between the KNXD core and one of its drivers. You
-      should thus also add ``-B log``.
+      need to also add ``-B log`` if you want to see what's going on.
+      
+      This is not the default because you often need different subsets for
+      verbosity and messaging.
  
 .. Note::
 
@@ -383,40 +392,6 @@ These options apply to all drivers and servers.
 
   *Note*: Starting up knxd still fails if there is a configuration error.
 
-* may-fail (bool; ``--arg=may-fail=true``)
-
-  If the driver doesn't initially start up, knxd will continue anyway
-  instead of terminating with an error.
-
-* retry-delay (int (seconds), ``--arg=retry-delay=NUM``)
-
-  If the driver fails to start (or dies), knxd will restart it after this
-  many seconds.
-
-  Default: zero: no restart.
-
-* max-retry (int, ``--arg=max-retry=NUM``)
-
-  The maximum number of retries before giving up.
-
-  Default: zero: infinite (if retry-delay is positive)
-
-* send-timeout (int (seconds), ``--arg=send-timeout=NUM``)
-
-  Transmission timeout. If a driver does not indicate that it's ready for
-  the next transmission after this many seconds, it will be marked as
-  failing.
-
-  Note that this value is ineffective when using the "queue" filter.
-
-  Default: 10 seconds.
-
-If retrying is active but "may-fail" is false, the driver must start
-correctly when knxd starts up. It will only be restarted once knxd is,
-or rather has been, fully operative.
-
-A restarting driver will not participate in packet transmission.
-
 dummy
 -----
 
@@ -427,11 +402,13 @@ It does not have any options.
 ip
 --
 
-This driver attaches to the multicast system. It is a minimal version of
-the "router" server's routing code (no tunnel server, no discovery).
+This driver attaches to the IP multicast system. It is a minimal version of
+the ``ets_router`` server's routing code (no tunnel server, no autodiscovery).
 
-Never use this driver and the "ets_router" server on the same multicast
-address.
+.. Warning::
+
+    **Never** use this driver and the ``ets_router`` server at the same time (unless you
+    specify different multicast addresses).
 
 * multicast-address (string: IP address)
 
@@ -451,6 +428,12 @@ address.
 
   Optional; the default is the first broadcast-capable interface on your
   system, or the interface which your default route uses.
+
+.. Note::
+
+    You **must** use a multicast address here. Direct links to Ip
+    interfaces are called "tunnels" and accessed with the ``ipt`` driver,
+    below.
 
 ipt
 ---
@@ -516,6 +499,12 @@ The following options are not recognized unless "nat" is set.
   ??
   
   Mandatory if "nat" is set, otherwise disallowed.
+
+.. Note::
+
+    You **must not** use a multicast address here. Using multicast links
+    is called "routing"; multicast is accessed either with the ``ip``
+    driver, above, or the ``ets_router`` server, below.
 
 iptn
 ----
@@ -583,12 +572,12 @@ The following options control repetition of unacknowledged packets. They
 also apply to the "ft12" and "ft12cemi" drivers which wrap EMI1 / CEMI data
 in a serial protocol.
 
-* send-timeout (int; ``--send-delay=MSEC``)
+* send-timeout (int; ``--send-timeout=MSEC``)
 
   USB devices confirm packet transmission. This option controls how long
   to wait until proceeding. A warning is printed when that happens.
 
-  The default is 0.3 seconds.
+  The default is 300 milliseconds.
 
   Note that this driver's old "send-delay" option is misnamed, as the
   timeout is pre-emted when the remote side signals that is has accepted
@@ -805,8 +794,10 @@ ets_router
 The "ets_router" server allows clients to discover knxd and to connect to it
 with the standardized KNX tunneling or routing protocols.
 
-*Do not* use this server and the "ip" driver at the same time (unless you
-specify different multicast addresses).
+.. Warning::
+
+    **Never** use this server and the ``ip`` driver at the same time (unless you
+    specify different multicast addresses).
 
 * tunnel (str; ``-T|--Tunnelling``)
 
@@ -1020,6 +1011,70 @@ knxd.
 Unlike the "single" filter, "remap" does not take an address parameter
 because its whole point is to use the address assigned to the link by knxd.
 
+retry
+-----
+
+If a driver fails, the default behavior is to terminate knxd.
+You can use this module to restart the driver instead.
+
+Also, this module can be used to restart a driver if transmission
+of a message takes longer than some predefined time.
+
+This module is transparently inserted in front of line drivers.
+
+* max-retries (int, counter)
+
+  The maximum number of retries when opening a driver or sending a packet.
+ 
+  The default is one: if the first attempt fails, the error is propagated
+  to the router. Set to zero if the number of retries should not be limited.
+
+  For compatibility with older configuration, this option may be used
+  on the driver.
+
+* retry-delay (float, seconds)
+
+  The time before (re-)opening the driver when a failure occurred.
+
+  The default is zero: no timeout.
+
+  For compatibility with older configuration, this option may be used
+  on the driver.
+
+* send-timeout (float, seconds)
+
+  The time after which a message must have been transmitted.
+  Otherwise the driver is closed and re-opened.
+
+  The default is zero: no timeout.
+
+  This option is also accepted on some drivers, but the semantics is
+  different: the ``retry`` filter always restarts the driver before
+  retrying, whereas the driver should assume a soft transmission error.
+
+* start-timeout (float, seconds)
+
+  The maximum time (re-)opening the driver may take.
+
+  The default is zero: no timeout.
+
+* flush (bool)
+
+  Flag whether to-be-transmitted packets are discarded while the driver is down.
+
+  The default is False: packet transmission will halt. You might want to use a ``queue``
+  filter in front of ``retry``.
+
+* may-fail (bool)
+
+  Flag whether the initial start of this driver may fail, i.e. if set, this module
+  affects the driver's initial start-up.
+ 
+  The default is False, i.e. retrying only kicks in after the driver is operational.
+
+  For compatibility with older configuration, this option may be used
+  on the driver.
+
 queue
 -----
 
@@ -1031,6 +1086,7 @@ This filter implements a queue which decouples an interface, so that its
 speed does not affect the rest of the system.
 
 The "queue" filter does not yet have any parameters.
+
 
 pace
 ----

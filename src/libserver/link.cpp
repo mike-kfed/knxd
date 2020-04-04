@@ -18,21 +18,10 @@
 */
 
 #include "link.h"
-#include "router.h"
-#include <stdio.h>
 
-LinkBase::~LinkBase() { }
-LinkRecv::~LinkRecv() { }
-Driver::~Driver() { }
-BusDriver::~BusDriver() { }
-SubDriver::~SubDriver() { }
-LineDriver::~LineDriver() { }
-LinkConnect_::~LinkConnect_() { }
-Filter::~Filter() { }
-Server::~Server() { }
-BaseRouter::~BaseRouter() { }
-LinkConnectClient::~LinkConnectClient() { }
-LinkConnectSingle::~LinkConnectSingle() { }
+#include <cstdio>
+
+#include "router.h"
 
 bool
 LinkRecv::link(LinkBasePtr next)
@@ -72,20 +61,18 @@ Driver::assureFilter(std::string name, bool first)
 
 LinkConnect::~LinkConnect()
 {
-  retry_timer.stop();
-
   if (addr && addr_local)
     static_cast<Router &>(router).release_client_addr(addr);
 }
 
-LinkBase::LinkBase(BaseRouter& r UNUSED, IniSectionPtr& s, TracePtr tr) : cfg(s)
+LinkBase::LinkBase(BaseRouter&, IniSectionPtr& s, TracePtr tr) : cfg(s)
 {
   t = TracePtr(new Trace(*tr, s));
   t->setAuxName("Base");
 }
 
 std::string
-LinkBase::info(int level UNUSED)
+LinkBase::info(int)
 {
   // TODO add more introspection
   std::string res = "cfg:";
@@ -94,18 +81,17 @@ LinkBase::info(int level UNUSED)
 }
 
 LinkConnect_::LinkConnect_(BaseRouter& r, IniSectionPtr& c, TracePtr tr)
-   : router(r), LinkRecv(r,c,tr)
+  : router(r), LinkRecv(r,c,tr)
 {
   t->setAuxName("Conn_");
   //Router& rt = dynamic_cast<Router&>(r);
 }
 
 LinkConnect::LinkConnect(BaseRouter& r, IniSectionPtr& c, TracePtr tr)
-   : LinkConnect_(r,c,tr)
+  : LinkConnect_(r,c,tr)
 {
   t->setAuxName("Conn");
   //Router& rt = dynamic_cast<Router&>(r);
-  retry_timer.set <LinkConnect,&LinkConnect::retry_timer_cb> (this);
 }
 
 const char *
@@ -122,13 +108,9 @@ LinkConnect::stateName()
     case L_going_up:
       return ">up";
     case L_error:
-      return "down/error";
-    case L_up_error:
-      return "up/error";
-    case L_going_down_error:
-      return ">down/error";
-    case L_wait_retry:
-      return "error/retry";
+      return "error";
+    case L_going_error:
+      return ">error";
     default:
       abort();
       return "?!?";
@@ -146,9 +128,6 @@ LinkConnect::setState(LConnState new_state)
   state = new_state;
   TRACEPRINTF(t, 5, "%s => %s", osn, stateName());
 
-  if (old_state == L_wait_retry || old_state == L_up && new_state != L_up)
-    retry_timer.stop();
-
   switch(old_state)
     {
     case L_down:
@@ -160,18 +139,22 @@ LinkConnect::setState(LConnState new_state)
         case L_going_down: // redundant call to stop()
           state = L_down;
           break;
-        default: goto inval;
-        } break;
+        default:
+          goto inval;
+        }
+      break;
     case L_going_down:
       switch(new_state)
         {
         case L_error:
-          state = L_going_down_error;
+          state = L_going_error;
           break;
         case L_down:
           break;
-        default: goto inval;
-        } break;
+        default:
+          goto inval;
+        }
+      break;
     case L_up:
       switch(new_state)
         {
@@ -179,82 +162,61 @@ LinkConnect::setState(LConnState new_state)
           state = L_up;
           break;
         case L_going_down:
+          stop(false);
+          break;
         case L_down:
-          stop();
           break;
         case L_error:
-          state = L_up_error;
+          state = L_error;
           break;
-        default: goto inval;
-        } break;
+        default:
+          goto inval;
+        }
+      break;
     case L_going_up:
       switch(new_state)
         {
         case L_up:
-          retries = 0;
           break;
         case L_going_down:
-          stop();
+          stop(false);
           break;
         case L_down:
-          goto retry;
+          break;
         case L_error:
-          state = L_up_error;
+          state = L_error;
           break;
-        default: goto inval;
-        } break;
-    case L_wait_retry:
-      switch(new_state)
-        {
-        case L_going_up:
-          start();
-          break;
-        case L_going_down:
-          TRACEPRINTF(t, 5, "retrying halted");
-          state = L_down;
-          break;
-        default: goto inval;
-        } break;
+        default:
+          goto inval;
+        }
+      break;
     case L_error:
       switch(new_state)
         {
-        case L_wait_retry:
-          goto retry;
         case L_error:
           break;
         case L_going_down:
           state = L_error;
           break;
         case L_down:
-          goto retry;
-        default: goto inval;
-        } break;
-    case L_up_error:
-      switch(new_state)
-        {
-        case L_going_down:
-          state = L_going_down_error;
-          stop();
           break;
-        case L_down:
-          goto retry;
-          break;
-        case L_error:
-          break;
-        default: goto inval;
-        } break;
-    case L_going_down_error:
+        default:
+          goto inval;
+        }
+      break;
+    case L_going_error:
       switch(new_state)
         {
         case L_down:
-          goto retry;
         case L_error:
           break;
         case L_going_down:
-          state = L_going_down_error;
+          state = L_going_error;
           break;
-        default: goto inval;
-        } break;
+        default:
+          goto inval;
+        }
+      break;
     }
   static_cast<Router&>(router).linkStateChanged(std::dynamic_pointer_cast<LinkConnect>(shared_from_this()));
   return;
@@ -263,36 +225,6 @@ inval:
   ERRORPRINTF (t, E_ERROR | 60, "invalid transition: %s => %s", osn, stateName());
   abort();
   return;
-
-retry:
-  if (retry_delay > 0 && !max_retries || retries < max_retries)
-    {
-      TRACEPRINTF (t, 5, "retry in %d sec", retry_delay);
-      state = L_wait_retry;
-      retry_timer.start (retry_delay,0);
-    }
-  else
-    {
-      if (retry_delay > 0)
-        TRACEPRINTF (t, 5, "retrying finished");
-      state = L_error;
-      static_cast<Router&>(router).linkStateChanged(std::dynamic_pointer_cast<LinkConnect>(shared_from_this()));
-    }
-}
-
-void
-LinkConnect::retry_timer_cb (ev::timer &w UNUSED, int revents UNUSED)
-{
-  if (state == L_up && !send_more)
-    {
-      ERRORPRINTF (t, E_ERROR | 55, "Driver timed out trying to send (%s)", cfg->name);
-      errored();
-      return;
-    }
-  if (state != L_wait_retry)
-    return;
-  retries++;
-  setState(L_going_up);
 }
 
 void
@@ -318,7 +250,6 @@ LinkConnect::start()
 {
   TRACEPRINTF(t, 5, "Starting");
   send_more = true;
-  changed = time(NULL);
   LinkConnect_::start();
 }
 
@@ -330,18 +261,17 @@ LinkConnect_::start()
 }
 
 void
-LinkConnect::stop()
+LinkConnect::stop(bool err)
 {
-  TRACEPRINTF(t, 5, "Stopping");
-  changed = time(NULL);
-  LinkConnect_::stop();
+  TRACEPRINTF(t, 5, "L Stopping");
+  LinkConnect_::stop(err);
 }
 
 void
-LinkConnect_::stop()
+LinkConnect_::stop(bool err)
 {
-  send->stop();
-  LinkRecv::stop();
+  send->stop(err);
+  LinkRecv::stop(err);
 }
 
 const std::string&
@@ -368,7 +298,7 @@ Filter::findFilter(std::string name, bool skip_me)
 }
 
 FilterPtr
-Driver::findFilter(std::string name, bool skip_me UNUSED)
+Driver::findFilter(std::string name, bool skip_me)
 {
   auto r = recv.lock();
   if (r == nullptr)
@@ -397,10 +327,9 @@ LinkConnect::setup()
     return false;
 
   ignore = cfg->value("ignore",false);
-  may_fail = cfg->value("may-fail",false);
-  retry_delay = cfg->value("retry-delay",0);
-  max_retries = cfg->value("max-retry",0);
-  send_timeout = cfg->value("send-timeout", 10);
+  x_may_fail = cfg->value("may-fail",false);
+  x_max_retries = cfg->value("max-retries",-1);
+  x_retry_delay = cfg->value("retry-delay",1.);
   return true;
 }
 
@@ -430,7 +359,7 @@ LinkConnect_::setup()
             IniSectionPtr s = static_cast<Router&>(router).ini[name];
             name = s->value("filter",name);
             link = static_cast<Router&>(router).get_filter(std::dynamic_pointer_cast<LinkConnect_>(shared_from_this()),
-                  s, name);
+                   s, name);
             if (link == nullptr)
               {
                 ERRORPRINTF (t, E_ERROR | 32, "filter '%s' not found.", name);
@@ -447,7 +376,7 @@ LinkConnect_::setup()
         pos = comma+1;
       }
   }
-  
+
   LinkBasePtr s = send;
   while (s != nullptr)
     {
@@ -478,7 +407,6 @@ void
 LinkConnect::started()
 {
   setState(L_up);
-  changed = time(NULL);
   TRACEPRINTF(t, 5, "Started");
 }
 
@@ -486,8 +414,6 @@ void
 LinkConnect::send_Next()
 {
   send_more = true;
-  if (state == L_up)
-    retry_timer.stop();
   TRACEPRINTF(t, 6, "sendNext called, send_more set");
   static_cast<Router&>(router).send_Next();
 }
@@ -497,21 +423,14 @@ LinkConnect::send_L_Data (LDataPtr l)
 {
   send_more = false;
   assert (state == L_up);
-  retry_timer.start(send_timeout,0);
   TRACEPRINTF(t, 6, "sending, send_more clear");
   LinkConnect_::send_L_Data(std::move(l));
 }
 
 void
-LinkConnect::stopped()
+LinkConnect::stopped(bool err)
 {
-  setState(L_down);
-}
-
-void
-LinkConnect::errored()
-{
-  setState(L_error);
+  setState(err ? L_error : L_down);
 }
 
 void
@@ -528,7 +447,8 @@ LinkConnect::checkSysAddress(eibaddr_t addr)
 
 bool
 LinkConnect::checkSysGroupAddress(eibaddr_t addr)
-{ return static_cast<Router&>(router).checkGroupAddress(addr, std::dynamic_pointer_cast<LinkConnect>(shared_from_this()));
+{
+  return static_cast<Router&>(router).checkGroupAddress(addr, std::dynamic_pointer_cast<LinkConnect>(shared_from_this()));
 }
 
 bool
@@ -539,7 +459,8 @@ LinkConnect_::checkSysAddress(eibaddr_t addr)
 
 bool
 LinkConnect_::checkSysGroupAddress(eibaddr_t addr)
-{ return static_cast<Router&>(router).checkGroupAddress(addr, nullptr);
+{
+  return static_cast<Router&>(router).checkGroupAddress(addr, nullptr);
 }
 
 
@@ -565,14 +486,14 @@ LinkConnectClient::LinkConnectClient(ServerPtr s, IniSectionPtr& c, TracePtr tr)
 }
 
 SubDriver::SubDriver(const LinkConnectClientPtr& c)
-      : BusDriver(static_cast<const LinkConnectPtr&>(c), c->cfg)
+  : BusDriver(static_cast<const LinkConnectPtr&>(c), c->cfg)
 {
   t->setAuxName("SubDr");
   server = c->server;
 }
 
 LineDriver::LineDriver(const LinkConnectClientPtr& c)
-      : Driver(c, c->cfg)
+  : Driver(c, c->cfg)
 {
   t->setAuxName("LineDr");
   server = c->server;
@@ -651,7 +572,7 @@ Driver::recv_L_Busmonitor (LBusmonPtr l)
 {
   auto r = recv.lock();
   if (r != nullptr)
-    r->recv_L_Busmonitor(std::move(l)); 
+    r->recv_L_Busmonitor(std::move(l));
 }
 
 void
@@ -659,7 +580,7 @@ Filter::recv_L_Busmonitor (LBusmonPtr l)
 {
   auto r = recv.lock();
   if (r != nullptr)
-    r->recv_L_Busmonitor(std::move(l)); 
+    r->recv_L_Busmonitor(std::move(l));
 }
 
 void
@@ -679,35 +600,19 @@ Filter::started()
 }
 
 void
-Driver::stopped()
+Driver::stopped(bool err)
 {
   auto r = recv.lock();
   if (r != nullptr)
-    r->stopped();
+    r->stopped(err);
 }
 
 void
-Driver::errored()
+Filter::stopped(bool err)
 {
   auto r = recv.lock();
   if (r != nullptr)
-    r->errored();
-}
-
-void
-Filter::stopped()
-{
-  auto r = recv.lock();
-  if (r != nullptr)
-    r->stopped();
-}
-
-void
-Filter::errored()
-{
-  auto r = recv.lock();
-  if (r != nullptr)
-    r->errored();
+    r->stopped(err);
 }
 
 bool
@@ -758,7 +663,7 @@ Driver::push_filter(FilterPtr filter, bool first)
 }
 
 Filter::Filter(const LinkConnectPtr_& c, IniSectionPtr& s)
-    : LinkRecv(c->router, s, c->t)
+  : LinkRecv(c->router, s, c->t)
 {
   conn = c;
   t->setAuxName(c->t->name);
